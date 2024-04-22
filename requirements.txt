@@ -1,5 +1,4 @@
-dash == 2.6.0
-flask == 3.0.3
+dash == 2.11.0
 pandas
 gunicorn
 scikit-learn
