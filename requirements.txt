@@ -1,4 +1,4 @@
-dash == 2.11.0
+dash == 2.10.0
 pandas
 gunicorn
 scikit-learn
