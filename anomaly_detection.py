@@ -67,7 +67,7 @@ def train_model(data):
 
 def predict_prices(model, data, prediction_days=7):
     last_date = data.index[-1]
-    future_dates = pd.date_range(start=last_date, periods=prediction_days+1, closed='right')
+    future_dates = pd.date_range(start=last_date, periods=prediction_days+1)
     future_dates = future_dates[1:]  # Exclude the last date
     
     # Create a DataFrame with the same columns as the training data
