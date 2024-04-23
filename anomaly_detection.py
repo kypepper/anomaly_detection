@@ -370,7 +370,7 @@ server = app.server
 # Define the layout of the app
 app.layout = html.Div([
     html.Div([
-        html.Label('Stock Symbol'),
+        html.Label('Stock Symbol (press space bar after symbol)'),
         dcc.Input(id='stock-symbol-input', type='text', value='AAPL'),
         html.Label('Time Period'),
         dcc.Dropdown(
