@@ -12,11 +12,80 @@ import yfinance as yf
 from sklearn.neighbors import LocalOutlierFactor
 from sklearn.svm import OneClassSVM 
 from decimal import Decimal, getcontext
+from ta.volume import OnBalanceVolumeIndicator
+from ta.trend import AroonIndicator
+from ta.trend import ADXIndicator
+from datetime import date
+import datetime
+from datetime import timedelta
+from sklearn.impute import SimpleImputer
 
 # Define functions for data processing
 def fetch_stock_data(symbol, period):
     data = yf.download(symbol, period=period)
     return data
+
+def calculate_adl(data):
+    adl = [0]
+    for i in range(1, len(data)):
+        adl.append(adl[i-1] + ((data['Close'][i] - data['Low'][i]) - (data['High'][i] - data['Close'][i])) * data['Volume'][i] / (data['High'][i] - data['Low'][i]))
+    data['ADL'] = adl
+    return data
+
+def calculate_technical_indicators(data):
+    obv = OnBalanceVolumeIndicator(data['Close'], data['Volume'])
+    data['OBV'] = obv.on_balance_volume()
+
+    # Calculate ADL
+    data = calculate_adl(data)
+
+    # Calculate Aroon
+    aroon = AroonIndicator(data['High'], data['Low'], window=14)  # Pass both high and low prices
+    data['Aroon_Up'] = aroon.aroon_up()
+    data['Aroon_Down'] = aroon.aroon_down()
+
+    adx = ADXIndicator(data['High'], data['Low'], data['Close'])
+    data['ADX'] = adx.adx()
+    
+    return data
+
+
+def train_model(data):
+    # Extract input features (X) and target variable (y)
+    X = data[['OBV', 'Aroon_Up', 'Aroon_Down', 'ADX', 'ADL']].values
+    y = data['Close'].values
+    
+    # Impute missing values in input features using mean strategy
+    imputer = SimpleImputer(strategy='mean')
+    X_imputed = imputer.fit_transform(X)
+    
+    # Initialize and train the linear regression model
+    model = LinearRegression()
+    model.fit(X_imputed, y)
+    
+    return model
+
+def predict_prices(model, data, prediction_days=7):
+    last_date = data.index[-1]
+    future_dates = pd.date_range(start=last_date, periods=prediction_days+1, closed='right')
+    future_dates = future_dates[1:]  # Exclude the last date
+    
+    # Create a DataFrame with the same columns as the training data
+    future_data = pd.DataFrame(columns=['OBV', 'Aroon_Up', 'Aroon_Down', 'ADX', 'ADL'], index=future_dates)
+    
+    # Assuming the 'data' DataFrame contains the latest values for the features
+    future_data['OBV'] = data['OBV'].iloc[-1]
+    future_data['Aroon_Up'] = data['Aroon_Up'].iloc[-1]
+    future_data['Aroon_Down'] = data['Aroon_Down'].iloc[-1]
+    future_data['ADX'] = data['ADX'].iloc[-1]
+    future_data['ADL'] = data['ADL'].iloc[-1]
+    
+    # Predict prices for the future dates
+    predicted_prices = model.predict(future_data)
+    
+    return predicted_prices, future_dates
+
+
 
 def add_sma(data, sma_period=20):
     data['SMA'] = data['Close'].rolling(window=sma_period).mean()
@@ -149,16 +218,6 @@ def generate_explanations(data):
 
 
 # Define functions for visualization and UI
-def candlestick_chart(data, x_axis, y_axis, y_scale):
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=data.index,
-                     open=data['Open'],
-                     high=data['High'],
-                     low=data['Low'],
-                     close=data['Close'],
-                     name='Candlestick'))
-    fig.update_layout(xaxis_title=x_axis, yaxis_title=y_axis, yaxis_type=y_scale)
-    return fig
 
 def sma_trend_lines_with_volume(data, predicted_prices, x_axis, y_axis, y_scale):
     fig = go.Figure()
@@ -336,9 +395,6 @@ app.layout = html.Div([
         ),
     ]),
     dcc.Tabs([
-        dcc.Tab(label='Candlestick', children=[
-            dcc.Graph(id='candlestick-chart', style={'height': '800px'})
-        ]),
         dcc.Tab(label='SMA and Trend Lines', children=[
             dcc.Graph(id='sma-trend-lines', style={'height': '800px'})
         ]),
@@ -353,6 +409,9 @@ app.layout = html.Div([
         ]),
         dcc.Tab(label='Risk', children=[
             dcc.Graph(id='risk', style={'height': '400px'})
+        ]),
+        dcc.Tab(label='Prediction', children=[
+            dcc.Graph(id='prediction-chart', style={'height': '800px'})
         ]),
     ]),
     html.Div([
@@ -388,12 +447,12 @@ app.layout = html.Div([
 
 # Callback to update the graphs based on axis selections
 @app.callback(
-    [Output('candlestick-chart', 'figure'),
-     Output('sma-trend-lines', 'figure'),
+    [Output('sma-trend-lines', 'figure'),
      Output('anomalies', 'figure'),
      Output('all-data', 'figure'),
      Output('causes', 'figure'),
-     Output('risk', 'figure')],
+     Output('risk', 'figure'),
+     Output('prediction-chart', 'figure')],
     [Input('stock-symbol-input', 'value'),
      Input('time-period-dropdown', 'value'),
      Input('x-axis-dropdown', 'value'),
@@ -413,17 +472,37 @@ def update_graphs(symbol, period, x_axis, y_axis, y_scale, risk_factors):
     data = detect_anomalies_svm(data)
     data = combine_anomalies(data)
     data['Explanation'] = generate_explanations(data)
+    data = calculate_technical_indicators(data)
+    model = train_model(data)
+    predicted_prices, future_dates = predict_prices(model, data)
+
+    # Calculate start and end dates for the desired data range
+    end_date = future_dates[-1]
+    start_date = end_date - timedelta(days=20)  # Three weeks prior
+
+# Filter data for the prior three weeks and the prediction week
+    prior_data = data[(data.index >= start_date) & (data.index <= end_date)]
+    predicted_data = pd.DataFrame({'Close': predicted_prices}, index=future_dates)
+
+    prediction_chart = go.Figure([
+        go.Scatter(x=prior_data.index, y=prior_data['Close'], mode='lines', name='Prior Close Price'),
+        go.Scatter(x=predicted_data.index, y=predicted_data['Close'], mode='lines', name='Predicted Close Price', line=dict(color='red'))
+    ])
+    
+    prediction_chart.update_layout(title='Actual vs Predicted Close Prices')
     
     risk_figure = calculate_risk(data, risk_factors)
 
+
     figures = [
-        candlestick_chart(data, x_axis, y_axis, y_scale),
         sma_trend_lines_with_volume(data, predicted_prices, x_axis, y_axis, y_scale),
         anomalies(data, x_axis, y_axis, y_scale),
         all_data(data, x_axis, y_axis, y_scale),
         causes(data, x_axis, y_axis, y_scale),
-        risk_figure
+        risk_figure,
+        prediction_chart
     ]
+    
     return figures
 
 # Run the app
