@@ -80,7 +80,7 @@ def predict_prices(model, data, prediction_days=7):
     future_data['ADX'] = data['ADX'].iloc[-1]
     future_data['ADL'] = data['ADL'].iloc[-1]
     
-    # Predict prices for the future dates
+    # Predict prices for the future dates (Ky)
     predicted_prices = model.predict(future_data)
     
     return predicted_prices, future_dates
@@ -228,7 +228,6 @@ def sma_trend_lines_with_volume(data, predicted_prices, x_axis, y_axis, y_scale)
                          close=data['Close'],
                          name='Candlestick'))
     fig.add_trace(go.Scatter(x=data.index, y=data['SMA'], name='SMA'))
-    fig.add_trace(go.Scatter(x=data.index, y=predicted_prices, mode='lines', name='Trend'))
     fig.add_trace(go.Bar(x=data.index, 
                          y=data['Volume'], 
                          name='Volume', 
@@ -367,6 +366,7 @@ def causes(data, x_axis, y_axis, y_scale):
 app = dash.Dash(__name__)
 
 server = app.server
+
 # Define the layout of the app
 app.layout = html.Div([
     html.Div([
@@ -398,11 +398,11 @@ app.layout = html.Div([
         dcc.Tab(label='SMA and Trend Lines', children=[
             dcc.Graph(id='sma-trend-lines', style={'height': '800px'})
         ]),
-        dcc.Tab(label='Anomalies', children=[
-            dcc.Graph(id='anomalies', style={'height': '800px'})
-        ]),
         dcc.Tab(label='All Data', children=[
             dcc.Graph(id='all-data', style={'height': '800px'})
+        ]),
+        dcc.Tab(label='Anomalies', children=[
+            dcc.Graph(id='anomalies', style={'height': '800px'})
         ]),
         dcc.Tab(label='Causes', children=[
             dcc.Graph(id='causes', style={'height': '800px'})
@@ -448,8 +448,8 @@ app.layout = html.Div([
 # Callback to update the graphs based on axis selections
 @app.callback(
     [Output('sma-trend-lines', 'figure'),
-     Output('anomalies', 'figure'),
      Output('all-data', 'figure'),
+     Output('anomalies', 'figure'),
      Output('causes', 'figure'),
      Output('risk', 'figure'),
      Output('prediction-chart', 'figure')],
@@ -460,6 +460,70 @@ app.layout = html.Div([
      Input('y-scale-dropdown', 'value'),
      Input('risk-factors-checklist', 'value')]
 )
+def update_predictions_and_analysis(stock_symbol, time_period, x_axis, y_axis, y_scale, risk_factors):
+    # Call the function that updates the graphs
+    figures = update_graphs(stock_symbol, time_period, x_axis, y_axis, y_scale, risk_factors)
+    return figures
+
+def update_predictions_and_analysis(n_clicks, stock_symbol, time_period):
+    if n_clicks > 0:
+        # Fetch historical stock data
+        data = yf.download(stock_symbol, period=time_period)
+        data.reset_index(inplace=True)
+        
+        # Calculate technical indicators
+        obv = OnBalanceVolumeIndicator(data['Close'], data['Volume'])
+        data['OBV'] = obv.on_balance_volume()
+        aroon = AroonIndicator(data['High'], data['Low'], window=14)
+        data['Aroon_Up'] = aroon.aroon_up()
+        data['Aroon_Down'] = aroon.aroon_down()
+        adx = ADXIndicator(data['High'], data['Low'], data['Close'])
+        data['ADX'] = adx.adx()
+        
+        # Train the model
+        X = data[['OBV', 'Aroon_Up', 'Aroon_Down', 'ADX']].values
+        y = data['Close'].values
+        imputer = SimpleImputer(strategy='mean')
+        X_imputed = imputer.fit_transform(X)
+        model = LinearRegression()
+        model.fit(X_imputed, y)
+        
+        # Make prediction for the next day
+        tomorrow = datetime.now() + timedelta(days=1)
+        prediction_data = {
+            'OBV': obv.on_balance_volume()[-1],
+            'Aroon_Up': aroon.aroon_up()[-1],
+            'Aroon_Down': aroon.aroon_down()[-1],
+            'ADX': adx.adx()[-1]
+        }
+        prediction_input = imputer.transform([list(prediction_data.values())])
+        prediction = model.predict(prediction_input)[0]
+        
+        # Perform retrospective analysis
+        retrospective_results = []
+        for i in range(len(data)):
+            historical_features = X_imputed[:i+1]
+            retrospective_prediction = model.predict(historical_features)[-1]
+            retrospective_results.append((data['Date'][i], retrospective_prediction, data['Close'][i]))
+        
+        # Format retrospective analysis results
+        retrospective_output = html.Table([
+            html.Thead(html.Tr([html.Th('Date'), html.Th('Retrospective Prediction'), html.Th('Actual Close Price')])),
+            html.Tbody([
+                html.Tr([
+                    html.Td(result[0]),
+                    html.Td(round(result[1], 2)),
+                    html.Td(result[2])
+                ]) for result in retrospective_results
+            ])
+        ])
+        
+        return f"Prediction for {tomorrow.date()}: {round(prediction, 2)}", retrospective_output
+
+    return "", ""
+
+
+
 def update_graphs(symbol, period, x_axis, y_axis, y_scale, risk_factors):
     # Get stock data for the specified symbol and time period
     data = fetch_stock_data(symbol, period)
@@ -496,8 +560,8 @@ def update_graphs(symbol, period, x_axis, y_axis, y_scale, risk_factors):
 
     figures = [
         sma_trend_lines_with_volume(data, predicted_prices, x_axis, y_axis, y_scale),
-        anomalies(data, x_axis, y_axis, y_scale),
         all_data(data, x_axis, y_axis, y_scale),
+        anomalies(data, x_axis, y_axis, y_scale),
         causes(data, x_axis, y_axis, y_scale),
         risk_figure,
         prediction_chart
