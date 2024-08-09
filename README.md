@@ -10,3 +10,6 @@ Python-based dashboard application designed for real-time visualization of stock
 -Utilized data preprocessing techniques including feature scaling and imputation for model training.
 
 *I am still constantly updating my program to add more features and make my training more accurate. I coded everything including the UI.
+
+Video Demo: 
+https://www.youtube.com/watch?v=4QchIybeaB4&t=7s
