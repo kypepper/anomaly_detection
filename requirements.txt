@@ -5,4 +5,3 @@ requests
 plotly
 scikit-learn
 ta
-decimal
