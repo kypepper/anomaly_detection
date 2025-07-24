@@ -1,8 +1,8 @@
-dash == 2.10.0
+streamlit
 pandas
-gunicorn
-scikit-learn
-yfinance
 numpy
+requests
 plotly
+scikit-learn
 ta
+decimal
